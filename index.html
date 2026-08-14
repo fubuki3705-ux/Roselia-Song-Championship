@@ -103,6 +103,54 @@
       .card-body{padding:9px}
       .song-title{font-size:14px}
     }
+
+    .section-title{margin:28px 0 12px;font-size:24px}
+    .bracket-scroll{overflow-x:auto;padding:6px 2px 18px}
+    .bracket{
+      display:flex;gap:24px;align-items:stretch;min-width:max-content;
+    }
+    .bracket-round{
+      width:235px;display:flex;flex-direction:column;justify-content:space-around;gap:14px;
+    }
+    .bracket-round-title{
+      text-align:center;font-weight:900;color:var(--muted);margin-bottom:8px;position:sticky;top:0;
+    }
+    .bracket-match{
+      background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+      overflow:hidden;min-height:78px;position:relative;
+    }
+    .bracket-song{
+      padding:9px 11px;color:#8f95a6;border-left:3px solid transparent;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .bracket-song + .bracket-song{border-top:1px solid var(--line)}
+    .bracket-song.winner{
+      color:#fff;font-weight:900;border-left:5px solid #fff;background:rgba(255,255,255,.08);
+      text-shadow:0 0 10px rgba(255,255,255,.22);
+    }
+    .bracket-song.champion{
+      color:#fff;font-weight:950;border-left:6px solid var(--ok);
+      background:rgba(85,214,139,.12);
+    }
+    .bracket-connector{
+      color:#f7f8fb;font-weight:900;
+    }
+    .stats-wrap{overflow-x:auto}
+    .stats-table{width:100%;border-collapse:collapse;min-width:760px}
+    .stats-table th,.stats-table td{
+      border-bottom:1px solid var(--line);padding:10px 9px;text-align:center;
+    }
+    .stats-table th{color:var(--muted);font-size:12px;position:sticky;top:0;background:var(--panel)}
+    .stats-table td.title-cell{text-align:left;font-weight:750;max-width:260px}
+    .stats-table tr:hover td{background:rgba(255,255,255,.025)}
+    .stat-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0 18px}
+    .stat-card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+    .stat-card .n{font-size:24px;font-weight:900}
+    .stat-card .k{font-size:12px;color:var(--muted);margin-top:2px}
+    @media (max-width:700px){
+      .stat-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+
   </style>
 </head>
 <body>
@@ -110,7 +158,7 @@
   <header>
     <div>
       <h1>Roselia Song Championship</h1>
-      <div class="subtitle">예선 4중 2선택 → 패자부활 → 조별리그 4중 2선택 → 결선 셔플</div>
+      <div class="subtitle">예선 4중 2선택 → 패자부활 → 조별리그 4중 2선택 → 고정 결선 대진표</div>
     </div>
     <div class="toolbar">
       <button class="btn" id="resetBtn">처음부터</button>
@@ -130,7 +178,8 @@ const CONFIG = {
   picksPerGroup: 2,
   groupSize: 4,
   songsUrl: "songs.json",
-  storageKey: "roselia-song-championship-state-v2"
+  storageKey: "roselia-song-championship-state-v3",
+  statsKey: "roselia-song-championship-stats-v1"
 };
 
 let songs = [];
@@ -154,16 +203,30 @@ function save(){ localStorage.setItem(CONFIG.storageKey, JSON.stringify(state));
 function clearSave(){ localStorage.removeItem(CONFIG.storageKey); }
 function songById(id){ return songs.find(s => String(s.id)===String(id)); }
 
-function imgTag(song){
-  if(!song.image) return `<div class="image-missing">이미지 없음</div>`;
-  return `<img src="${escapeHtml(song.image)}" alt="${escapeHtml(song.title)}"
-    onerror="this.outerHTML='<div class=&quot;image-missing&quot;>이미지를 찾을 수 없음<br>${escapeHtml(song.image)}</div>'">`;
-}
-
 function escapeHtml(v){
   return String(v ?? "").replace(/[&<>"']/g, c => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   }[c]));
+}
+
+/* images are directly under /images */
+function webImagePath(path){
+  if(!path) return "";
+  let p=String(path).replaceAll("\\","/");
+  p=p.replace(/^\.?\//,"");
+  p=p.replace(/^images\/songs\//i,"images/");
+  if(!p.startsWith("images/")){
+    const name=p.split("/").pop();
+    p="images/"+name;
+  }
+  return p;
+}
+
+function imgTag(song){
+  const image=webImagePath(song.image);
+  if(!image) return `<div class="image-missing">이미지 없음</div>`;
+  return `<img src="${escapeHtml(image)}" alt="${escapeHtml(song.title)}"
+    onerror="this.outerHTML='<div class=&quot;image-missing&quot;>이미지를 찾을 수 없음<br>${escapeHtml(image)}</div>'">`;
 }
 
 function youtubeSlot(song){
@@ -188,6 +251,11 @@ function highestPowerOfTwoLE(n){
   return 2 ** Math.floor(Math.log2(n));
 }
 
+function nextPowerOfTwoGE(n){
+  if(n <= 1) return 1;
+  return 2 ** Math.ceil(Math.log2(n));
+}
+
 function makeGroups(ids){
   const groups=[];
   for(let i=0;i<ids.length;i+=CONFIG.groupSize){
@@ -204,6 +272,7 @@ function initializeNew(){
 
   const entrants=shuffle(songs).map(s=>s.id);
   state={
+    version:3,
     stage:"prelim",
     entrants,
     prelim:{
@@ -216,7 +285,8 @@ function initializeNew(){
     repechage:null,
     groupStage:null,
     tournament:null,
-    champion:null
+    champion:null,
+    completedAt:null
   };
   save();
   render();
@@ -266,10 +336,7 @@ function renderPrelim(){
         ? `4곡씩 나누고 남은 곡입니다. 최대 ${maxPick}곡까지 고를 수 있습니다. 0곡 선택도 가능합니다.`
         : `4곡 중 다음 단계에 올릴 2곡을 선택하세요.`}</p>
       <div class="group-grid">
-        ${group.map(id=>{
-          const s=songById(id);
-          return card(s,picks.includes(id),true,`data-prelim-id="${escapeHtml(id)}"`);
-        }).join("")}
+        ${group.map(id=>card(songById(id),picks.includes(id),true,`data-prelim-id="${escapeHtml(id)}"`)).join("")}
       </div>
       <div class="group-footer">
         <div class="progress">선택 ${picks.length} / ${isRemainder ? `최대 ${maxPick}` : "2"}</div>
@@ -285,9 +352,8 @@ function renderPrelim(){
       const id=el.dataset.prelimId;
       let cur=[...(p.picks[key]||[])];
       const pos=cur.map(String).indexOf(String(id));
-      if(pos>=0){
-        cur.splice(pos,1);
-      }else if(cur.length < maxPick){
+      if(pos>=0) cur.splice(pos,1);
+      else if(cur.length < maxPick){
         const originalId=group.find(x=>String(x)===String(id));
         cur.push(originalId);
       }
@@ -301,16 +367,13 @@ function renderPrelim(){
     if(idx < p.groups.length-1){
       p.groupIndex++;
       save(); renderPrelim();
-    }else{
-      finishPrelim();
-    }
+    }else finishPrelim();
   });
 }
 
 function finishPrelim(){
   const p=state.prelim;
-  const passed=[];
-  const lost=[];
+  const passed=[], lost=[];
   p.groups.forEach((group,i)=>{
     const picked=p.picks[String(i)] || [];
     passed.push(...picked);
@@ -321,31 +384,19 @@ function finishPrelim(){
   p.passed=passed;
   p.lost=lost;
 
-  // Target: largest power of two that can be reached by adding some prelim losers.
-  // For 61 songs, normal prelim gives 30 + remainder picks; typically target becomes 32.
-  let target = 1;
-  while(target < passed.length) target *= 2;
-  if(target > songs.length) target = highestPowerOfTwoLE(songs.length);
+  let target=nextPowerOfTwoGE(passed.length);
+  if(target > songs.length) target=highestPowerOfTwoLE(songs.length);
+  const need=Math.max(0,target-passed.length);
 
-  const need = Math.max(0, target - passed.length);
+  if(need===0){ startGroupStage(passed); return; }
 
-  if(need===0){
-    startGroupStage(passed);
-    return;
-  }
-
-  if(need > lost.length){
+  if(need>lost.length){
     state={stage:"error",message:`패자부활 후보가 부족합니다. 필요 ${need}곡 / 패자 ${lost.length}곡`};
     save(); render(); return;
   }
 
   state.stage="repechage";
-  state.repechage={
-    candidates:shuffle(lost),
-    need,
-    target,
-    picks:[]
-  };
+  state.repechage={candidates:shuffle(lost),need,target,picks:[]};
   save(); renderRepechage();
 }
 
@@ -361,16 +412,11 @@ function renderRepechage(){
       <h2>패자부활전</h2>
       <p>예선 탈락곡을 전부 모았습니다. 여기서 <b>${r.need}곡</b>을 골라 ${r.target}곡으로 맞추세요.</p>
       <div class="group-grid">
-        ${r.candidates.map(id=>{
-          const s=songById(id);
-          return card(s,r.picks.includes(id),true,`data-rep-id="${escapeHtml(id)}"`);
-        }).join("")}
+        ${r.candidates.map(id=>card(songById(id),r.picks.includes(id),true,`data-rep-id="${escapeHtml(id)}"`)).join("")}
       </div>
       <div class="group-footer">
         <div class="progress">선택 ${r.picks.length} / ${r.need}</div>
-        <button class="btn primary" id="finishRepBtn" ${r.picks.length===r.need ? "" : "disabled"}>
-          조별리그로
-        </button>
+        <button class="btn primary" id="finishRepBtn" ${r.picks.length===r.need ? "" : "disabled"}>조별리그로</button>
       </div>
     </section>`;
 
@@ -469,47 +515,103 @@ function renderGroups(){
   });
 }
 
-/* ---------------- TOURNAMENT ---------------- */
+/* ---------------- FIXED TOURNAMENT BRACKET ----------------
+   Shuffle ONCE here. Every later round follows the fixed bracket positions.
+*/
 
 function startTournament(ids){
+  const seeded=shuffle(ids); // exactly one shuffle for the entire knockout bracket
+  const firstMatches=[];
+  for(let i=0;i<seeded.length;i+=2){
+    firstMatches.push({
+      a:seeded[i],
+      b:seeded[i+1] ?? null,
+      winner:seeded[i+1] == null ? seeded[i] : null
+    });
+  }
+
   state.stage="tournament";
   state.tournament={
-    round:ids.length,
-    pool:[...ids],
-    pairs:[],
-    pairIndex:0,
-    winners:[]
+    initialSize:ids.length,
+    seeded,
+    rounds:[
+      {size:ids.length,matches:firstMatches}
+    ],
+    roundIndex:0,
+    matchIndex:0
   };
-  setupRound();
+  save();
+  advanceAutomaticByes();
+  renderTournament();
 }
 
-function setupRound(){
+function buildNextRoundIfReady(){
   const t=state.tournament;
-  const shuffled=shuffle(t.pool);
-  t.pairs=[];
-  t.winners=[];
-  for(let i=0;i<shuffled.length;i+=2){
-    if(i+1<shuffled.length) t.pairs.push([shuffled[i],shuffled[i+1]]);
-    else t.winners.push(shuffled[i]);
+  const current=t.rounds[t.roundIndex];
+  if(!current.matches.every(m=>m.winner!=null)) return false;
+
+  const winners=current.matches.map(m=>m.winner);
+  if(winners.length===1){
+    finishTournament(winners[0]);
+    return true;
   }
-  t.pairIndex=0;
-  save(); renderTournament();
+
+  if(t.rounds.length > t.roundIndex+1){
+    t.roundIndex++;
+    t.matchIndex=0;
+    return true;
+  }
+
+  const nextMatches=[];
+  for(let i=0;i<winners.length;i+=2){
+    nextMatches.push({
+      a:winners[i],
+      b:winners[i+1] ?? null,
+      winner:winners[i+1] == null ? winners[i] : null
+    });
+  }
+  t.rounds.push({size:winners.length,matches:nextMatches});
+  t.roundIndex++;
+  t.matchIndex=0;
+  return true;
+}
+
+function advanceAutomaticByes(){
+  const t=state.tournament;
+  let safety=20;
+  while(safety-->0){
+    const round=t.rounds[t.roundIndex];
+    const nextUnplayed=round.matches.findIndex(m=>m.winner==null);
+    if(nextUnplayed>=0){
+      t.matchIndex=nextUnplayed;
+      save();
+      return;
+    }
+    if(!buildNextRoundIfReady()) return;
+    if(state.stage==="winner") return;
+  }
 }
 
 function renderTournament(){
   const t=state.tournament;
-  const pair=t.pairs[t.pairIndex];
+  const round=t.rounds[t.roundIndex];
+  const pair=round.matches[t.matchIndex];
 
-  if(!pair){ finishRound(); return; }
+  if(!pair || pair.winner!=null){
+    advanceAutomaticByes();
+    if(state.stage==="winner"){ renderWinner(); return; }
+  }
 
-  stageLabel.textContent=`결선 토너먼트 ${t.round}강`;
-  statusText.textContent=`대결 ${t.pairIndex+1} / ${t.pairs.length} · 매 라운드 대진 셔플`;
+  const active=t.rounds[t.roundIndex].matches[t.matchIndex];
+  const a=songById(active.a), b=songById(active.b);
 
-  const a=songById(pair[0]), b=songById(pair[1]);
+  stageLabel.textContent=`결선 토너먼트 ${round.size}강`;
+  statusText.textContent=`대결 ${t.matchIndex+1} / ${round.matches.length} · 대진표 고정`;
+
   main.innerHTML=`
     <section class="panel">
-      <h2>${t.round}강</h2>
-      <p>승자를 한 곡 선택하세요.</p>
+      <h2>${round.size}강</h2>
+      <p>결선 진입 시 한 번 셔플된 대진표를 끝까지 유지합니다.</p>
       <div class="duel">
         ${card(a,false,true,`data-win-id="${escapeHtml(a.id)}"`)}
         <div class="vs">VS</div>
@@ -520,36 +622,196 @@ function renderTournament(){
   document.querySelectorAll("[data-win-id]").forEach(el=>{
     el.addEventListener("click",()=>{
       const id=el.dataset.winId;
-      const originalId=pair.find(x=>String(x)===String(id));
-      t.winners.push(originalId);
-      t.pairIndex++;
-      save(); renderTournament();
+      active.winner=[active.a,active.b].find(x=>String(x)===String(id));
+      save();
+
+      const next=t.rounds[t.roundIndex].matches.findIndex((m,i)=>i>t.matchIndex && m.winner==null);
+      if(next>=0){
+        t.matchIndex=next;
+        save(); renderTournament();
+      }else{
+        buildNextRoundIfReady();
+        if(state.stage==="winner") renderWinner();
+        else { advanceAutomaticByes(); renderTournament(); }
+      }
     });
   });
 }
 
-function finishRound(){
-  const t=state.tournament;
-  const winners=[...t.winners];
-
-  if(winners.length===1){
-    state.stage="winner";
-    state.champion=winners[0];
-    save(); renderWinner(); return;
-  }
-
-  t.round=winners.length;
-  t.pool=winners;
-  t.pairs=[];
-  t.pairIndex=0;
-  t.winners=[];
-  setupRound();
+function finishTournament(championId){
+  state.stage="winner";
+  state.champion=championId;
+  state.completedAt=new Date().toISOString();
+  recordStatistics();
+  save();
 }
+
+/* ---------------- BRACKET ---------------- */
+
+function roundName(size){
+  if(size===2) return "결승";
+  if(size===4) return "4강";
+  return `${size}강`;
+}
+
+function bracketHTML(){
+  const t=state.tournament;
+  if(!t || !t.rounds) return "";
+
+  return `
+    <h2 class="section-title">최종 대진표</h2>
+    <div class="bracket-scroll">
+      <div class="bracket">
+        ${t.rounds.map((round,ri)=>`
+          <div class="bracket-round">
+            <div class="bracket-round-title">${roundName(round.size)}</div>
+            ${round.matches.map(m=>{
+              const a=songById(m.a), b=m.b!=null?songById(m.b):null;
+              const aWin=String(m.winner)===String(m.a);
+              const bWin=b && String(m.winner)===String(m.b);
+              const champ=String(m.winner)===String(state.champion);
+              return `
+                <div class="bracket-match">
+                  <div class="bracket-song ${aWin?'winner':''} ${aWin&&champ?'champion':''}">
+                    ${escapeHtml(a?.title ?? "BYE")}
+                  </div>
+                  <div class="bracket-song ${bWin?'winner':''} ${bWin&&champ?'champion':''}">
+                    ${escapeHtml(b?.title ?? "BYE")}
+                  </div>
+                </div>`;
+            }).join("")}
+          </div>
+        `).join("")}
+      </div>
+    </div>`;
+}
+
+/* ---------------- STATISTICS ---------------- */
+
+function loadStats(){
+  try{
+    const x=JSON.parse(localStorage.getItem(CONFIG.statsKey)||'{"runs":0,"songs":{}}');
+    if(!x.songs) x.songs={};
+    if(!x.runs) x.runs=0;
+    return x;
+  }catch(e){
+    return {runs:0,songs:{}};
+  }
+}
+
+function ensureStat(stats,id){
+  const key=String(id);
+  if(!stats.songs[key]){
+    const s=songById(id);
+    stats.songs[key]={
+      id,
+      title:s?.title ?? key,
+      prelimAppearances:0,
+      prelimPassed:0,
+      repechageSelected:0,
+      groupAppearances:0,
+      groupPassed:0,
+      knockoutAppearances:0,
+      knockoutWins:0,
+      finals:0,
+      championships:0
+    };
+  }
+  return stats.songs[key];
+}
+
+function recordStatistics(){
+  if(state.statsRecorded) return;
+
+  const stats=loadStats();
+  stats.runs++;
+
+  // Every entrant appeared in prelim.
+  state.entrants.forEach(id=>ensureStat(stats,id).prelimAppearances++);
+
+  (state.prelim?.passed||[]).forEach(id=>ensureStat(stats,id).prelimPassed++);
+  (state.repechage?.picks||[]).forEach(id=>ensureStat(stats,id).repechageSelected++);
+
+  (state.groupStage?.entrants||[]).forEach(id=>ensureStat(stats,id).groupAppearances++);
+  (state.groupStage?.qualified||[]).forEach(id=>ensureStat(stats,id).groupPassed++);
+
+  const rounds=state.tournament?.rounds||[];
+  rounds.forEach(round=>{
+    round.matches.forEach(m=>{
+      if(m.a!=null) ensureStat(stats,m.a).knockoutAppearances++;
+      if(m.b!=null) ensureStat(stats,m.b).knockoutAppearances++;
+      if(m.winner!=null) ensureStat(stats,m.winner).knockoutWins++;
+    });
+  });
+
+  const finalRound=rounds[rounds.length-1];
+  if(finalRound?.matches?.[0]){
+    const f=finalRound.matches[0];
+    if(f.a!=null) ensureStat(stats,f.a).finals++;
+    if(f.b!=null) ensureStat(stats,f.b).finals++;
+  }
+  if(state.champion!=null) ensureStat(stats,state.champion).championships++;
+
+  localStorage.setItem(CONFIG.statsKey,JSON.stringify(stats));
+  state.statsRecorded=true;
+}
+
+function runStatsHTML(){
+  const stats=loadStats();
+  const rows=Object.values(stats.songs)
+    .sort((a,b)=>
+      b.championships-a.championships ||
+      b.knockoutWins-a.knockoutWins ||
+      b.groupPassed-a.groupPassed ||
+      String(a.title).localeCompare(String(b.title))
+    );
+
+  const champ=rows[0];
+  const totalKO=rows.reduce((n,r)=>n+r.knockoutWins,0);
+
+  return `
+    <h2 class="section-title">누적 통계</h2>
+    <section class="panel">
+      <div class="stat-cards">
+        <div class="stat-card"><div class="n">${stats.runs}</div><div class="k">완료한 대회</div></div>
+        <div class="stat-card"><div class="n">${rows.length}</div><div class="k">통계 기록 곡</div></div>
+        <div class="stat-card"><div class="n">${totalKO}</div><div class="k">결선 승리 누계</div></div>
+        <div class="stat-card"><div class="n">${escapeHtml(champ?.title ?? "-")}</div><div class="k">최다 우승곡</div></div>
+      </div>
+      <div class="stats-wrap">
+        <table class="stats-table">
+          <thead><tr>
+            <th>곡</th>
+            <th>예선 통과</th>
+            <th>패자부활</th>
+            <th>조별 통과</th>
+            <th>결선 승</th>
+            <th>결승</th>
+            <th>우승</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r=>`
+              <tr>
+                <td class="title-cell">${escapeHtml(r.title)}</td>
+                <td>${r.prelimPassed}/${r.prelimAppearances}</td>
+                <td>${r.repechageSelected}</td>
+                <td>${r.groupPassed}/${r.groupAppearances}</td>
+                <td>${r.knockoutWins}</td>
+                <td>${r.finals}</td>
+                <td><b>${r.championships}</b></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+/* ---------------- WINNER ---------------- */
 
 function renderWinner(){
   const s=songById(state.champion);
   stageLabel.textContent="우승";
-  statusText.textContent="Roselia Song Championship Champion";
+  statusText.textContent="대회 완료 · 대진표 및 누적 통계";
   main.innerHTML=`
     <section class="panel winner">
       <div class="image-wrap" style="max-width:360px;margin:0 auto;border-radius:22px">${imgTag(s)}</div>
@@ -559,7 +821,10 @@ function renderWinner(){
       <div style="margin-top:20px">
         <button class="btn primary" id="againBtn">새 대회 시작</button>
       </div>
-    </section>`;
+    </section>
+    ${bracketHTML()}
+    ${runStatsHTML()}
+  `;
   $("#againBtn").addEventListener("click",()=>{ clearSave(); initializeNew(); });
 }
 
