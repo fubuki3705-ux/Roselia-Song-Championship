@@ -624,6 +624,30 @@
       .mc-champ-title{font-size:18px}
     }
 
+  
+    /* ---- v8 bracket card/layout/export overrides ---- */
+    .winner .action-row{
+      margin-top:20px;
+      display:flex;
+      gap:10px;
+      justify-content:center;
+      flex-wrap:wrap;
+    }
+    .mc-svg{
+      min-height:760px;
+    }
+    .mc-export-note{
+      text-align:center;
+      color:var(--muted);
+      font-size:12px;
+      margin-top:10px;
+    }
+    @media(max-width:700px){
+      .mc-svg{
+        min-height:980px;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -1141,19 +1165,22 @@ function sameId(a,b){
 
 function svgEntryCard(x,y,w,h,id,side){
   const s=songById(id);
-  const title=(s?.title||"").length>18 ? (s.title.slice(0,17)+"…") : (s?.title||"");
+  const lines=splitTitleLines(s?.title||"", 13, 3);
   const img=webImagePath(s?.image);
-  const thumb=32;
-  const pad=7;
-  let imgX = side==="left" ? x+pad : x+w-pad-thumb;
-  let textX = side==="left" ? x+pad+thumb+8 : x+pad;
-  const textWidth=w-thumb-pad*2-9;
+  const thumb=52;
+  const thumbX=x+(w-thumb)/2;
+  const thumbY=y+8;
+  const textY=thumbY+thumb+15;
+
+  const tspans = lines.map((ln,i)=>
+    `<tspan x="${x+w/2}" dy="${i===0?0:14}">${svgEscape(ln)}</tspan>`
+  ).join("");
 
   return `
     <g>
-      <rect class="mc-entry" x="${x}" y="${y}" width="${w}" height="${h}" rx="10"/>
-      ${img ? `<image href="${svgEscape(img)}" x="${imgX}" y="${y+(h-thumb)/2}" width="${thumb}" height="${thumb}" preserveAspectRatio="xMidYMid slice" class="mc-entry-thumb"/>` : ""}
-      <text class="mc-entry-title" x="${textX}" y="${y+h/2}" textLength="${Math.min(textWidth, Math.max(40,title.length*8))}" lengthAdjust="spacingAndGlyphs">${svgEscape(title)}</text>
+      <rect class="mc-entry" x="${x}" y="${y}" width="${w}" height="${h}" rx="12"/>
+      ${img ? `<image href="${svgEscape(img)}" x="${thumbX}" y="${thumbY}" width="${thumb}" height="${thumb}" preserveAspectRatio="xMidYMid slice" class="mc-entry-thumb"/>` : ""}
+      <text class="mc-entry-title" x="${x+w/2}" y="${textY}" text-anchor="middle">${tspans}</text>
     </g>`;
 }
 
@@ -1166,26 +1193,27 @@ function buildSvgBracket(){
   const rounds=bracketRounds();
   if(!t || rounds.length<1) return "";
 
-  const first=rounds[0];
   const entrants=t.seeded || [];
   const n=entrants.length;
+  const half=Math.ceil(n/2);
 
-  // Designed for 16-song knockout. It still scales for 8/32 reasonably.
   const W=1000;
-  const H=Math.max(900, 140 + Math.max(8,n/2)*88);
+  const H=Math.max(1120, 240 + half*112);   // taller overall layout
   const centerY=H/2;
 
-  const cardW=190, cardH=48;
+  const cardW=132, cardH=102;
   const leftX=24, rightX=W-24-cardW;
-  const leftStemX=leftX+cardW+18;
-  const rightStemX=rightX-18;
+  const leftStemX=leftX+cardW+16;
+  const rightStemX=rightX-16;
+  const topY=150;
+  const spacing=(H-300)/Math.max(1,half-1);
 
-  const half=Math.ceil(n/2);
-  const spacing=(H-170)/Math.max(1,half-1);
-  const topY=85;
+  const champBoxW=230, champBoxH=240;
+  const champX=(W-champBoxW)/2, champY=centerY-champBoxH/2;
 
   let out=[];
-  let defs=`
+
+  out.push(`
     <defs>
       <filter id="winnerGlow" x="-40%" y="-40%" width="180%" height="180%">
         <feGaussianBlur stdDeviation="4" result="blur"/>
@@ -1195,73 +1223,73 @@ function buildSvgBracket(){
         <feGaussianBlur stdDeviation="3" result="blur"/>
         <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
-      <clipPath id="champClip"><rect x="455" y="${centerY-78}" width="90" height="90" rx="18"/></clipPath>
-    </defs>`;
+      <clipPath id="champClip"><rect x="${champX+70}" y="${champY+18}" width="90" height="90" rx="18"/></clipPath>
+      <radialGradient id="bgGlow" cx="50%" cy="48%" r="70%">
+        <stop offset="0%" stop-color="#15132a"/>
+        <stop offset="55%" stop-color="#0d0f18"/>
+        <stop offset="100%" stop-color="#090b12"/>
+      </radialGradient>
+    </defs>
+  `);
 
-  out.push(defs);
+  out.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="url(#bgGlow)"/>`);
+  out.push(`<text x="500" y="52" text-anchor="middle" style="fill:#8c7cff;font-size:22px;font-weight:950;letter-spacing:.08em">MUSIC CUP STYLE</text>`);
+  out.push(`<text x="500" y="88" text-anchor="middle" style="fill:#ffffff;font-size:28px;font-weight:950">Roselia · 결선 대진표</text>`);
 
-  // Round labels
-  out.push(`<text class="mc-round-label" x="${leftStemX+55}" y="48">16강</text>`);
-  out.push(`<text class="mc-round-label" x="352" y="48">8강</text>`);
-  out.push(`<text class="mc-round-label" x="434" y="48">4강</text>`);
-  out.push(`<text class="mc-round-label" x="${W-leftStemX-55}" y="48">16강</text>`);
-  out.push(`<text class="mc-round-label" x="${W-352}" y="48">8강</text>`);
-  out.push(`<text class="mc-round-label" x="${W-434}" y="48">4강</text>`);
+  // round labels
+  out.push(`<text class="mc-round-label" x="${leftStemX+52}" y="126">16강</text>`);
+  out.push(`<text class="mc-round-label" x="306" y="126">8강</text>`);
+  out.push(`<text class="mc-round-label" x="388" y="126">4강</text>`);
+  out.push(`<text class="mc-round-label" x="${W-leftStemX-52}" y="126">16강</text>`);
+  out.push(`<text class="mc-round-label" x="${W-306}" y="126">8강</text>`);
+  out.push(`<text class="mc-round-label" x="${W-388}" y="126">4강</text>`);
 
-  // First-round entrant cards, once only.
   const leftEntrants=entrants.slice(0,half);
   const rightEntrants=entrants.slice(half);
 
   leftEntrants.forEach((id,i)=>{
     const cy=topY+i*spacing;
-    out.push(svgEntryCard(leftX,cy-cardH/2,cardW,cardH,id,"left"));
+    out.push(svgEntryCard(leftX, cy-cardH/2, cardW, cardH, id, "left"));
   });
   rightEntrants.forEach((id,i)=>{
     const cy=topY+i*spacing;
-    out.push(svgEntryCard(rightX,cy-cardH/2,cardW,cardH,id,"right"));
+    out.push(svgEntryCard(rightX, cy-cardH/2, cardW, cardH, id, "right"));
   });
 
-  // Build geometric progression positions for each side.
-  function sideGeometry(side, ids, firstMatchOffset){
-    const sign=side==="left"?1:-1;
-    const outerX=side==="left"?leftStemX:rightStemX;
-    const roundXs=side==="left"
-      ? [outerX, 335, 420, 468]
-      : [outerX, W-335, W-420, W-468];
+  function sideGeometry(side, ids){
+    const outerX=side==="left" ? leftStemX : rightStemX;
+    const roundXs = side==="left"
+      ? [outerX, 286, 366, 432]
+      : [outerX, W-286, W-366, W-432];
 
-    // Leaf coordinates for entrant cards
     let prev=ids.map((id,i)=>({
       id,
       x:outerX,
       y:topY+i*spacing
     }));
 
-    // connector from card to stem
+    // stems from cards
     prev.forEach(p=>{
-      const sx=side==="left"?leftX+cardW:rightX;
+      const sx=side==="left" ? leftX+cardW : rightX;
       out.push(svgPath(`M ${sx} ${p.y} H ${outerX}`, false));
     });
 
-    // Each stage merges pairs.
-    for(let stage=0; stage<Math.min(3,Math.ceil(Math.log2(ids.length))); stage++){
+    for(let stage=0; stage<Math.min(3, Math.ceil(Math.log2(ids.length))); stage++){
       const next=[];
-      const x1=roundXs[stage];
-      const x2=roundXs[Math.min(stage+1,roundXs.length-1)];
+      const x2=roundXs[Math.min(stage+1, roundXs.length-1)];
+
       for(let j=0;j<prev.length;j+=2){
         const a=prev[j], b=prev[j+1];
         if(!b){
-          next.push({id:a.id,x:x2,y:a.y});
+          next.push({id:a.id, x:x2, y:a.y});
           continue;
         }
+
         const midY=(a.y+b.y)/2;
-        const roundIndex=stage;
-        const matchIndex=firstMatchOffset + Math.floor(j/(2**(stage+1)));
-        // Better match index mapping by side and stage:
         let mi;
         if(stage===0){
           mi = side==="left" ? Math.floor(j/2) : Math.floor(half/2)+Math.floor(j/2);
         }else{
-          const sideMatchesAtStage=Math.ceil((half)/(2**(stage+1)));
           mi = side==="left"
             ? Math.floor(j/2)
             : Math.floor(rounds[stage].matches.length/2)+Math.floor(j/2);
@@ -1270,53 +1298,46 @@ function buildSvgBracket(){
         const aWin=sameId(a.id,winner);
         const bWin=sameId(b.id,winner);
 
-        const elbowX=x2;
-        out.push(svgPath(`M ${a.x} ${a.y} H ${elbowX} V ${midY}`,aWin));
-        out.push(svgPath(`M ${b.x} ${b.y} H ${elbowX} V ${midY}`,bWin));
+        out.push(svgPath(`M ${a.x} ${a.y} H ${x2} V ${midY}`, aWin));
+        out.push(svgPath(`M ${b.x} ${b.y} H ${x2} V ${midY}`, bWin));
 
-        next.push({id:winner??a.id,x:elbowX,y:midY});
+        next.push({id:winner??a.id, x:x2, y:midY});
       }
+
       prev=next;
     }
 
-    // Final half path into center.
     if(prev.length){
       const p=prev[0];
-      const semiRound=Math.max(0,rounds.length-2);
-      const semiMatchIndex=side==="left"?0:Math.max(0,(rounds[semiRound]?.matches?.length||1)-1);
-      const semiWinner=rounds[semiRound]?.matches?.[semiMatchIndex]?.winner;
       const final=rounds[rounds.length-1]?.matches?.[0];
       const reachedFinal=final && (sameId(final.a,p.id)||sameId(final.b,p.id));
-      const isChamp=sameId(state.champion,p.id);
-      const targetX=side==="left"?470:530;
-      out.push(svgPath(`M ${p.x} ${p.y} H ${targetX} V ${centerY}`, reachedFinal || isChamp));
+      const targetX=side==="left" ? champX : champX+champBoxW;
+      out.push(svgPath(`M ${p.x} ${p.y} H ${targetX} V ${centerY}`, reachedFinal || sameId(state.champion,p.id)));
     }
   }
 
-  sideGeometry("left",leftEntrants,0);
-  sideGeometry("right",rightEntrants,Math.floor(first.matches.length/2));
+  sideGeometry("left", leftEntrants);
+  sideGeometry("right", rightEntrants);
 
-  // Champion area
+  // champion area
   const champ=songById(state.champion);
   const champImg=webImagePath(champ?.image);
-  out.push(`<rect class="mc-champ-box" x="390" y="${centerY-105}" width="220" height="210" rx="22"/>`);
+
+  out.push(`<rect class="mc-champ-box" x="${champX}" y="${champY}" width="${champBoxW}" height="${champBoxH}" rx="24"/>`);
   if(champImg){
-    out.push(`<image href="${svgEscape(champImg)}" x="455" y="${centerY-78}" width="90" height="90" preserveAspectRatio="xMidYMid slice" class="mc-champ-img"/>`);
+    out.push(`<image href="${svgEscape(champImg)}" x="${champX+70}" y="${champY+18}" width="90" height="90" preserveAspectRatio="xMidYMid slice" class="mc-champ-img"/>`);
   }
-  out.push(`<text class="mc-champ-sub" x="500" y="${centerY+35}">🏆 CHAMPION</text>`);
-  out.push(`<text class="mc-champ-title" x="500" y="${centerY+67}">${svgEscape(champ?.title||"")}</text>`);
+  out.push(`<text class="mc-champ-sub" x="500" y="${champY+130}">🏆 CHAMPION</text>`);
+  out.push(`<text class="mc-champ-title" x="500" y="${champY+165}">${svgEscape(champ?.title||"")}</text>`);
 
   return `
     <section class="mc-bracket-panel">
-      <div class="mc-bracket-head">
-        <div class="eyebrow">MUSIC CUP STYLE</div>
-        <h3>Roselia · 결선 대진표</h3>
-      </div>
       <div class="mc-svg-wrap">
-        <svg class="mc-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="결선 대진표">
+        <svg id="resultBracketSvg" class="mc-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="결선 대진표">
           ${out.join("")}
         </svg>
       </div>
+      <div class="mc-export-note">아래 버튼으로 공유용 PNG 이미지를 저장할 수 있습니다.</div>
     </section>`;
 }
 
@@ -1329,13 +1350,15 @@ function renderWinner(){
       <div class="image-wrap" style="max-width:320px;margin:0 auto;border-radius:22px">${imgTag(s)}</div>
       <h2>${escapeHtml(s.title)}</h2>
       <div class="artist">${escapeHtml(s.artist||"Roselia")}</div>
-      <div style="margin-top:20px">
+      <div class="action-row">
         <button class="btn primary" id="againBtn">새 대회 시작</button>
+        <button class="btn" id="saveBracketBtn">대진표 PNG 저장</button>
       </div>
     </section>
     ${buildSvgBracket()}
   `;
   $("#againBtn").addEventListener("click",()=>{clearSave();initializeNew();});
+  $("#saveBracketBtn")?.addEventListener("click", downloadBracketPNG);
 }
 
 /* ---------- CONTROLS / BOOT ---------- */
