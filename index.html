@@ -59,8 +59,36 @@
     .song-title{font-weight:800;line-height:1.35;min-height:2.7em}
     .artist{font-size:12px;color:var(--muted);margin-top:4px}
     .youtube-slot{
-      margin-top:10px;border:1px dashed var(--line);border-radius:10px;padding:9px 10px;
-      color:var(--muted);font-size:12px;text-align:center
+      margin-top:10px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      overflow:hidden;
+      background:#0d0e13;
+      color:var(--muted);
+      font-size:12px;
+      text-align:center;
+    }
+    .youtube-play{
+      width:100%;
+      border:0;
+      background:transparent;
+      color:#e9e9f2;
+      padding:10px 8px;
+      cursor:pointer;
+      font:inherit;
+      font-weight:800;
+    }
+    .youtube-play:hover{background:rgba(255,255,255,.05)}
+    .youtube-slot iframe{
+      display:block;
+      width:100%;
+      aspect-ratio:16/9;
+      border:0;
+      background:#000;
+    }
+    .youtube-missing{
+      padding:9px 10px;
+      color:var(--muted);
     }
     .select-badge{
       position:absolute;top:10px;right:10px;background:rgba(17,18,24,.88);border:1px solid var(--line);
@@ -634,7 +662,7 @@
       flex-wrap:wrap;
     }
     .mc-svg{
-      min-height:760px;
+      min-height:900px;
     }
     .mc-export-note{
       text-align:center;
@@ -644,7 +672,7 @@
     }
     @media(max-width:700px){
       .mc-svg{
-        min-height:980px;
+        min-height:1180px;
       }
     }
 
@@ -746,8 +774,52 @@ function imgTag(song){
   return `<img src="${escapeHtml(image)}" alt="${escapeHtml(song?.title||"")}"
     onerror="this.outerHTML='<div class=&quot;image-missing&quot;>이미지 없음</div>'">`;
 }
+function youtubeStartSeconds(value){
+  if(value===null || value===undefined || value==="") return 0;
+  if(typeof value==="number" && Number.isFinite(value)) return Math.max(0,Math.floor(value));
+  const s=String(value).trim();
+  if(/^\d+$/.test(s)) return Math.max(0,parseInt(s,10));
+  const m=s.match(/^(\d+):(\d{1,2})$/);
+  if(m) return Math.max(0,parseInt(m[1],10)*60+parseInt(m[2],10));
+  return 0;
+}
+function youtubeButtonMarkup(){
+  return `<button type="button" class="youtube-play"
+    onclick="event.stopPropagation(); playYoutubeClip(this.closest('.youtube-slot'))">▶ 클라이맥스 재생</button>`;
+}
 function youtubeSlot(song){
-  return `<div class="youtube-slot">YouTube 클라이맥스 영역</div>`;
+  const id=String(song?.youtubeId||"").trim();
+  if(!id){
+    return `<div class="youtube-slot"><div class="youtube-missing">YouTube 없음</div></div>`;
+  }
+  const start=youtubeStartSeconds(song?.youtubeStart);
+  return `<div class="youtube-slot"
+    data-youtube-id="${escapeHtml(id)}"
+    data-youtube-start="${start}"
+    onclick="event.stopPropagation()">
+      ${youtubeButtonMarkup()}
+    </div>`;
+}
+function stopYoutubePlayers(except=null){
+  document.querySelectorAll(".youtube-slot").forEach(slot=>{
+    if(slot===except) return;
+    if(slot.dataset.youtubeId && slot.querySelector("iframe")){
+      slot.innerHTML=youtubeButtonMarkup();
+    }
+  });
+}
+function playYoutubeClip(slot){
+  if(!slot || !slot.dataset.youtubeId) return;
+  stopYoutubePlayers(slot);
+  const id=slot.dataset.youtubeId;
+  const start=Math.max(0,parseInt(slot.dataset.youtubeStart||"0",10)||0);
+  const src=`https://www.youtube.com/embed/${encodeURIComponent(id)}?start=${start}&autoplay=1&playsinline=1&rel=0`;
+  slot.innerHTML=`<iframe
+    src="${src}"
+    title="YouTube 클라이맥스 재생"
+    allow="autoplay; encrypted-media; picture-in-picture"
+    allowfullscreen
+    referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
 }
 function card(song,selected=false,extra=""){
   return `
@@ -1163,6 +1235,139 @@ function sameId(a,b){
   return a!=null && b!=null && String(a)===String(b);
 }
 
+
+function splitTitleLines(title,maxChars=14,maxLines=3){
+  const text=String(title||"").trim();
+  if(!text) return [""];
+  if(text.length<=maxChars) return [text];
+
+  const lines=[];
+  if(/\s/.test(text)){
+    const words=text.split(/\s+/);
+    let cur="";
+    for(const word of words){
+      const next=cur ? `${cur} ${word}` : word;
+      if(next.length<=maxChars || !cur){
+        cur=next;
+      }else{
+        lines.push(cur);
+        cur=word;
+      }
+    }
+    if(cur) lines.push(cur);
+  }else{
+    for(let i=0;i<text.length;i+=maxChars){
+      lines.push(text.slice(i,i+maxChars));
+    }
+  }
+
+  if(lines.length>maxLines){
+    const kept=lines.slice(0,maxLines);
+    kept[maxLines-1]=kept[maxLines-1].slice(0,Math.max(1,maxChars-1))+"…";
+    return kept;
+  }
+  return lines;
+}
+
+async function downloadBracketPNG(){
+  const svg=document.getElementById("resultBracketSvg");
+  if(!svg){
+    alert("저장할 대진표가 없습니다.");
+    return;
+  }
+
+  try{
+    const clone=svg.cloneNode(true);
+
+    // Embed all jacket images as data URLs so canvas export keeps them.
+    const images=[...clone.querySelectorAll("image")];
+    for(const image of images){
+      const href=image.getAttribute("href") || image.getAttributeNS("http://www.w3.org/1999/xlink","href");
+      if(!href || href.startsWith("data:")) continue;
+      try{
+        const response=await fetch(href);
+        const blob=await response.blob();
+        const dataUrl=await new Promise((resolve,reject)=>{
+          const reader=new FileReader();
+          reader.onload=()=>resolve(reader.result);
+          reader.onerror=reject;
+          reader.readAsDataURL(blob);
+        });
+        image.setAttribute("href",dataUrl);
+      }catch(e){
+        console.warn("Could not embed image:",href,e);
+      }
+    }
+
+    // Critical fix: styles used by the live page are outside the SVG.
+    // Put the bracket CSS INSIDE the SVG before rasterizing.
+    const style=document.createElementNS("http://www.w3.org/2000/svg","style");
+    style.textContent=`
+      .mc-path{fill:none;stroke:#4b5162;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
+      .mc-path.win{stroke:#e2a0ff;stroke-width:8;filter:url(#winnerGlow)}
+      .mc-path.final-win{stroke:#f0b2ff;stroke-width:11;filter:url(#winnerGlow)}
+            .mc-path.final-win{stroke:#f0b2ff;stroke-width:11;filter:url(#winnerGlow)}
+      .mc-entry{fill:#171923;stroke:#51586a;stroke-width:2}
+      .mc-entry-title{fill:#f2f3f8;font-weight:800;font-size:14px;dominant-baseline:middle}
+      .mc-round-label{fill:#8990a3;font-size:13px;font-weight:900;text-anchor:middle}
+      .mc-champ-box{fill:#171923;stroke:#cf72ff;stroke-width:3;filter:url(#softGlow)}
+      .mc-champ-title{fill:#fff;font-size:27px;font-weight:950;text-anchor:middle}
+      .mc-champ-sub{fill:#e1a0ff;font-size:28px;font-weight:950;text-anchor:middle}
+    `;
+    clone.insertBefore(style,clone.firstChild);
+
+    clone.setAttribute("xmlns","http://www.w3.org/2000/svg");
+    clone.setAttribute("xmlns:xlink","http://www.w3.org/1999/xlink");
+
+    const vb=svg.viewBox.baseVal;
+    const width=vb?.width || 1200;
+    const height=vb?.height || 1700;
+    const scale=2;
+
+    const source=new XMLSerializer().serializeToString(clone);
+    const svgBlob=new Blob([source],{type:"image/svg+xml;charset=utf-8"});
+    const url=URL.createObjectURL(svgBlob);
+    const raster=new Image();
+
+    raster.onload=()=>{
+      const canvas=document.createElement("canvas");
+      canvas.width=Math.round(width*scale);
+      canvas.height=Math.round(height*scale);
+      const ctx=canvas.getContext("2d");
+      ctx.fillStyle="#090b12";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.scale(scale,scale);
+      ctx.drawImage(raster,0,0,width,height);
+      URL.revokeObjectURL(url);
+
+      canvas.toBlob(blob=>{
+        if(!blob){
+          alert("PNG 생성에 실패했습니다.");
+          return;
+        }
+        const downloadUrl=URL.createObjectURL(blob);
+        const a=document.createElement("a");
+        a.href=downloadUrl;
+        a.download=`roselia_bracket_${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(()=>URL.revokeObjectURL(downloadUrl),1500);
+      },"image/png");
+    };
+
+    raster.onerror=()=>{
+      URL.revokeObjectURL(url);
+      alert("대진표 이미지 렌더링에 실패했습니다.");
+    };
+
+    raster.src=url;
+  }catch(e){
+    console.error(e);
+    alert("대진표 이미지를 저장하지 못했습니다.");
+  }
+}
+
 function svgEntryCard(x,y,w,h,id,side){
   const s=songById(id);
   const lines=splitTitleLines(s?.title||"", 13, 3);
@@ -1197,147 +1402,245 @@ function buildSvgBracket(){
   const n=entrants.length;
   const half=Math.ceil(n/2);
 
-  const W=1000;
-  const H=Math.max(1120, 240 + half*112);   // taller overall layout
+  const W=1200;
+  const H=1760;
+  const centerX=W/2;
   const centerY=H/2;
 
-  const cardW=132, cardH=102;
-  const leftX=24, rightX=W-24-cardW;
-  const leftStemX=leftX+cardW+16;
-  const rightStemX=rightX-16;
-  const topY=150;
-  const spacing=(H-300)/Math.max(1,half-1);
+  const topEntrants=entrants.slice(0,half);
+  const bottomEntrants=entrants.slice(half);
 
-  const champBoxW=230, champBoxH=240;
-  const champX=(W-champBoxW)/2, champY=centerY-champBoxH/2;
+  const thumb=78;
+  const cardW=128;
+  const cardH=138;
+  const sidePad=24;
+  const gap=(W-sidePad*2-cardW*8)/7;
 
-  let out=[];
+  const topCardY=86;
+  const bottomCardY=H-86-cardH;
 
-  out.push(`
-    <defs>
-      <filter id="winnerGlow" x="-40%" y="-40%" width="180%" height="180%">
-        <feGaussianBlur stdDeviation="4" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
-      <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
-        <feGaussianBlur stdDeviation="3" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
-      <clipPath id="champClip"><rect x="${champX+70}" y="${champY+18}" width="90" height="90" rx="18"/></clipPath>
-      <radialGradient id="bgGlow" cx="50%" cy="48%" r="70%">
-        <stop offset="0%" stop-color="#15132a"/>
-        <stop offset="55%" stop-color="#0d0f18"/>
-        <stop offset="100%" stop-color="#090b12"/>
-      </radialGradient>
-    </defs>
-  `);
+  const topCenters=topEntrants.map((_,i)=>sidePad+cardW/2+i*(cardW+gap));
+  const bottomCenters=bottomEntrants.map((_,i)=>sidePad+cardW/2+i*(cardW+gap));
 
-  out.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="url(#bgGlow)"/>`);
-  out.push(`<text x="500" y="52" text-anchor="middle" style="fill:#8c7cff;font-size:22px;font-weight:950;letter-spacing:.08em">MUSIC CUP STYLE</text>`);
-  out.push(`<text x="500" y="88" text-anchor="middle" style="fill:#ffffff;font-size:28px;font-weight:950">Roselia · 결선 대진표</text>`);
+  const topLevels=[280,440,600];
+  const bottomLevels=[H-280,H-440,H-600];
 
-  // round labels
-  out.push(`<text class="mc-round-label" x="${leftStemX+52}" y="126">16강</text>`);
-  out.push(`<text class="mc-round-label" x="306" y="126">8강</text>`);
-  out.push(`<text class="mc-round-label" x="388" y="126">4강</text>`);
-  out.push(`<text class="mc-round-label" x="${W-leftStemX-52}" y="126">16강</text>`);
-  out.push(`<text class="mc-round-label" x="${W-306}" y="126">8강</text>`);
-  out.push(`<text class="mc-round-label" x="${W-388}" y="126">4강</text>`);
+  const champW=390;
+  const champH=350;
+  const champX=centerX-champW/2;
+  const champY=centerY-champH/2;
 
-  const leftEntrants=entrants.slice(0,half);
-  const rightEntrants=entrants.slice(half);
+  const basePaths=[];
+  const winPaths=[];
+  const finalBasePaths=[];
+  const finalWinPaths=[];
+  const cards=[];
+  let topFinalistNode=null;
+  let bottomFinalistNode=null;
 
-  leftEntrants.forEach((id,i)=>{
-    const cy=topY+i*spacing;
-    out.push(svgEntryCard(leftX, cy-cardH/2, cardW, cardH, id, "left"));
-  });
-  rightEntrants.forEach((id,i)=>{
-    const cy=topY+i*spacing;
-    out.push(svgEntryCard(rightX, cy-cardH/2, cardW, cardH, id, "right"));
-  });
+  function pathD(d,win=false){
+    (win?winPaths:basePaths).push(d);
+  }
 
-  function sideGeometry(side, ids){
-    const outerX=side==="left" ? leftStemX : rightStemX;
-    const roundXs = side==="left"
-      ? [outerX, 286, 366, 432]
-      : [outerX, W-286, W-366, W-432];
+  function cardAt(cx,y,id){
+    const s=songById(id);
+    const lines=splitTitleLines(s?.title||"",12,3);
+    const img=webImagePath(s?.image);
+    const x=cx-cardW/2;
+    const imgX=cx-thumb/2;
+    const imgY=y+10;
+    const textY=imgY+thumb+18;
+    const tspans=lines.map((ln,i)=>`<tspan x="${cx}" dy="${i===0?0:15}">${svgEscape(ln)}</tspan>`).join("");
+    return `
+      <g>
+        <rect class="mc-entry" x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="12"/>
+        ${img?`<image href="${svgEscape(img)}" x="${imgX}" y="${imgY}" width="${thumb}" height="${thumb}" preserveAspectRatio="xMidYMid slice"/>`:""}
+        <text class="mc-entry-title" x="${cx}" y="${textY}" text-anchor="middle">${tspans}</text>
+      </g>`;
+  }
 
-    let prev=ids.map((id,i)=>({
-      id,
-      x:outerX,
-      y:topY+i*spacing
-    }));
+  topEntrants.forEach((id,i)=>cards.push(cardAt(topCenters[i],topCardY,id)));
+  bottomEntrants.forEach((id,i)=>cards.push(cardAt(bottomCenters[i],bottomCardY,id)));
 
-    // stems from cards
-    prev.forEach(p=>{
-      const sx=side==="left" ? leftX+cardW : rightX;
-      out.push(svgPath(`M ${sx} ${p.y} H ${outerX}`, false));
-    });
+  function drawHalf(ids,centers,isTop){
+    const levels=isTop?topLevels:bottomLevels;
+    const firstRoundOffset=isTop?0:4;
+    const secondRoundOffset=isTop?0:2;
+    const thirdRoundOffset=isTop?0:1;
+    const cardEdgeY=isTop?topCardY+cardH:bottomCardY;
 
-    for(let stage=0; stage<Math.min(3, Math.ceil(Math.log2(ids.length))); stage++){
+    let nodes=ids.map((id,i)=>({id,x:centers[i],y:cardEdgeY}));
+
+    for(let stage=0;stage<3;stage++){
+      const parentY=levels[stage];
       const next=[];
-      const x2=roundXs[Math.min(stage+1, roundXs.length-1)];
 
-      for(let j=0;j<prev.length;j+=2){
-        const a=prev[j], b=prev[j+1];
-        if(!b){
-          next.push({id:a.id, x:x2, y:a.y});
-          continue;
-        }
+      for(let j=0;j<nodes.length;j+=2){
+        const a=nodes[j];
+        const b=nodes[j+1];
+        if(!b) continue;
 
-        const midY=(a.y+b.y)/2;
-        let mi;
-        if(stage===0){
-          mi = side==="left" ? Math.floor(j/2) : Math.floor(half/2)+Math.floor(j/2);
-        }else{
-          mi = side==="left"
-            ? Math.floor(j/2)
-            : Math.floor(rounds[stage].matches.length/2)+Math.floor(j/2);
-        }
-        const winner=rounds[stage]?.matches?.[mi]?.winner;
-        const aWin=sameId(a.id,winner);
-        const bWin=sameId(b.id,winner);
+        const parentX=(a.x+b.x)/2;
 
-        out.push(svgPath(`M ${a.x} ${a.y} H ${x2} V ${midY}`, aWin));
-        out.push(svgPath(`M ${b.x} ${b.y} H ${x2} V ${midY}`, bWin));
+        let matchIndex;
+        if(stage===0) matchIndex=firstRoundOffset+Math.floor(j/2);
+        else if(stage===1) matchIndex=secondRoundOffset+Math.floor(j/2);
+        else matchIndex=thirdRoundOffset;
 
-        next.push({id:winner??a.id, x:x2, y:midY});
+        const m=rounds[stage]?.matches?.[matchIndex];
+        const winner=m?.winner ?? null;
+
+        const aPath=`M ${a.x} ${a.y} V ${parentY} H ${parentX}`;
+        const bPath=`M ${b.x} ${b.y} V ${parentY} H ${parentX}`;
+
+        pathD(aPath,false);
+        pathD(bPath,false);
+
+        if(sameId(a.id,winner)) pathD(aPath,true);
+        if(sameId(b.id,winner)) pathD(bPath,true);
+
+        next.push({id:winner,x:parentX,y:parentY});
       }
 
-      prev=next;
+      nodes=next;
     }
 
-    if(prev.length){
-      const p=prev[0];
-      const final=rounds[rounds.length-1]?.matches?.[0];
-      const reachedFinal=final && (sameId(final.a,p.id)||sameId(final.b,p.id));
-      const targetX=side==="left" ? champX : champX+champBoxW;
-      out.push(svgPath(`M ${p.x} ${p.y} H ${targetX} V ${centerY}`, reachedFinal || sameId(state.champion,p.id)));
+    if(nodes.length===1){
+      if(isTop) topFinalistNode=nodes[0];
+      else bottomFinalistNode=nodes[0];
     }
   }
 
-  sideGeometry("left", leftEntrants);
-  sideGeometry("right", rightEntrants);
+  drawHalf(topEntrants,topCenters,true);
+  drawHalf(bottomEntrants,bottomCenters,false);
 
-  // champion area
+  const finalMatch=rounds[rounds.length-1]?.matches?.[0];
+
+  // Read the two semifinal winners directly from the fixed bracket.
+  const topSemiWinner = rounds[2]?.matches?.[0]?.winner ?? null;
+  const bottomSemiWinner = rounds[2]?.matches?.[1]?.winner ?? null;
+
+  const topWinsFinal = sameId(topSemiWinner, state.champion);
+  const bottomWinsFinal = sameId(bottomSemiWinner, state.champion);
+
+  if(topFinalistNode){
+    const d=`M ${topFinalistNode.x} ${topFinalistNode.y} V ${champY-28} H ${centerX} V ${champY}`;
+    finalBasePaths.push(d);
+    if(topWinsFinal) finalWinPaths.push(d);
+  }
+
+  if(bottomFinalistNode){
+    const d=`M ${bottomFinalistNode.x} ${bottomFinalistNode.y} V ${champY+champH+28} H ${centerX} V ${champY+champH}`;
+    finalBasePaths.push(d);
+    if(bottomWinsFinal) finalWinPaths.push(d);
+  }
+
   const champ=songById(state.champion);
   const champImg=webImagePath(champ?.image);
 
-  out.push(`<rect class="mc-champ-box" x="${champX}" y="${champY}" width="${champBoxW}" height="${champBoxH}" rx="24"/>`);
-  if(champImg){
-    out.push(`<image href="${svgEscape(champImg)}" x="${champX+70}" y="${champY+18}" width="90" height="90" preserveAspectRatio="xMidYMid slice" class="mc-champ-img"/>`);
-  }
-  out.push(`<text class="mc-champ-sub" x="500" y="${champY+130}">🏆 CHAMPION</text>`);
-  out.push(`<text class="mc-champ-title" x="500" y="${champY+165}">${svgEscape(champ?.title||"")}</text>`);
+  const basePathMarkup=basePaths.map(d=>`<path class="mc-path" d="${d}"/>`).join("");
+  const winPathMarkup=winPaths.map(d=>`<path class="mc-path win" d="${d}"/>`).join("");
+  const finalBaseMarkup=finalBasePaths.map(d=>`<path class="mc-path final-path" d="${d}"/>`).join("");
+  const finalWinMarkup="";
 
   return `
     <section class="mc-bracket-panel">
       <div class="mc-svg-wrap">
         <svg id="resultBracketSvg" class="mc-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="결선 대진표">
-          ${out.join("")}
+          <defs>
+            <filter id="winnerGlow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="6" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="4" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <clipPath id="champClip">
+              <rect x="${champX+101}" y="${champY+88}" width="188" height="188" rx="24"/>
+            </clipPath>
+            <radialGradient id="bgGlow" cx="50%" cy="50%" r="72%">
+              <stop offset="0%" stop-color="#16142d"/>
+              <stop offset="55%" stop-color="#0e1019"/>
+              <stop offset="100%" stop-color="#090b12"/>
+            </radialGradient>
+          </defs>
+
+          <style>
+            .mc-path{fill:none;stroke:#4b5162;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
+            .mc-path.win{stroke:#e2a0ff;stroke-width:8;filter:url(#winnerGlow)}
+            .mc-entry{fill:#171923;stroke:#51586a;stroke-width:2}
+            .mc-entry-title{fill:#f2f3f8;font-weight:800;font-size:14px;dominant-baseline:middle}
+            .mc-round-label{fill:#8990a3;font-size:13px;font-weight:900;text-anchor:middle}
+            .mc-champ-box{fill:#171923;stroke:#cf72ff;stroke-width:3;filter:url(#softGlow)}
+            .mc-champ-title{fill:#fff;font-size:27px;font-weight:950;text-anchor:middle}
+            .mc-champ-sub{fill:#e1a0ff;font-size:28px;font-weight:950;text-anchor:middle}
+          </style>
+
+          <rect x="0" y="0" width="${W}" height="${H}" fill="url(#bgGlow)"/>
+          <text x="${centerX}" y="46" text-anchor="middle" style="fill:#fff;font-size:31px;font-weight:950">Roselia · 결선 대진표</text>
+
+          <text class="mc-round-label" x="60" y="266">16강</text>
+          <text class="mc-round-label" x="60" y="426">8강</text>
+          <text class="mc-round-label" x="60" y="586">4강</text>
+          <text class="mc-round-label" x="60" y="${H-266}">16강</text>
+          <text class="mc-round-label" x="60" y="${H-426}">8강</text>
+          <text class="mc-round-label" x="60" y="${H-586}">4강</text>
+
+          ${basePathMarkup}
+          ${finalBaseMarkup}
+          ${winPathMarkup}
+          ${cards.join("")}
+
+          <text x="${centerX}" y="${champY-28}" text-anchor="middle" style="fill:#e2a0ff;font-size:20px;font-weight:950">결승</text>
+          ${topWinsFinal && topFinalistNode ? `
+            <path
+              d="M ${topFinalistNode.x} ${topFinalistNode.y} V ${champY-28} H ${centerX} V ${champY+4}"
+              fill="none"
+              stroke="#d88fff"
+              stroke-opacity="0.24"
+              stroke-width="18"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M ${topFinalistNode.x} ${topFinalistNode.y} V ${champY-28} H ${centerX} V ${champY+4}"
+              fill="none"
+              stroke="#e2a0ff"
+              stroke-width="10"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          ` : ""}
+
+          ${bottomWinsFinal && bottomFinalistNode ? `
+            <path
+              d="M ${bottomFinalistNode.x} ${bottomFinalistNode.y} V ${champY+champH+28} H ${centerX} V ${champY+champH-4}"
+              fill="none"
+              stroke="#d88fff"
+              stroke-opacity="0.24"
+              stroke-width="18"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M ${bottomFinalistNode.x} ${bottomFinalistNode.y} V ${champY+champH+28} H ${centerX} V ${champY+champH-4}"
+              fill="none"
+              stroke="#e2a0ff"
+              stroke-width="10"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          ` : ""}
+
+          <rect class="mc-champ-box" x="${champX}" y="${champY}" width="${champW}" height="${champH}" rx="30"/>
+          <text class="mc-champ-sub" x="${centerX}" y="${champY+52}">🏆 CHAMPION</text>
+          ${champImg?`<image href="${svgEscape(champImg)}" x="${champX+101}" y="${champY+88}" width="188" height="188" preserveAspectRatio="xMidYMid slice" clip-path="url(#champClip)"/>`:""}
+          <text class="mc-champ-title" x="${centerX}" y="${champY+318}">${svgEscape(champ?.title||"")}</text>
+
         </svg>
       </div>
-      <div class="mc-export-note">아래 버튼으로 공유용 PNG 이미지를 저장할 수 있습니다.</div>
+      <div class="mc-export-note">대진표 PNG 저장 버튼으로 공유용 이미지를 저장할 수 있습니다.</div>
     </section>`;
 }
 
@@ -1345,6 +1648,15 @@ function renderWinner(){
   const s=songById(state.champion);
   stageLabel.textContent="우승";
   statusText.textContent="대회 완료";
+
+  let bracketMarkup="";
+  try{
+    bracketMarkup=buildSvgBracket();
+  }catch(err){
+    console.error("Result bracket render failed:",err);
+    bracketMarkup=`<section class="panel"><h2>대진표 표시 오류</h2><p>${escapeHtml(err.message||String(err))}</p></section>`;
+  }
+
   main.innerHTML=`
     <section class="panel winner">
       <div class="image-wrap" style="max-width:320px;margin:0 auto;border-radius:22px">${imgTag(s)}</div>
@@ -1355,7 +1667,7 @@ function renderWinner(){
         <button class="btn" id="saveBracketBtn">대진표 PNG 저장</button>
       </div>
     </section>
-    ${buildSvgBracket()}
+    ${bracketMarkup}
   `;
   $("#againBtn").addEventListener("click",()=>{clearSave();initializeNew();});
   $("#saveBracketBtn")?.addEventListener("click", downloadBracketPNG);
