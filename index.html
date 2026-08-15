@@ -880,6 +880,12 @@ const CONFIG = {
   statsKey: "roselia-song-championship-stats-v3"
 };
 
+const SUPABASE = {
+  url: "https://onndrhyaymjazvnbqbgz.supabase.co",
+  key: "sb_publishable_HqLemyPBgX1HVAgbBeTkZQ_lPwLhLj2"
+};
+let supabaseSubmitting = false;
+
 let songs=[];
 let state=null;
 let undoStack=[];
@@ -1115,7 +1121,8 @@ function initializeNew(){
     tournament:null,
     champion:null,
     completedAt:null,
-    statsRecorded:false
+    statsRecorded:false,
+    supabaseRecorded:false
   };
   save();render();
 }
@@ -1425,6 +1432,138 @@ function renderTournament(){
   }));
 }
 
+
+/* ---------- SUPABASE GLOBAL STATS ---------- */
+function supabaseHeaders(extra={}){
+  return {
+    "apikey": SUPABASE.key,
+    "Authorization": `Bearer ${SUPABASE.key}`,
+    ...extra
+  };
+}
+
+function knockoutStageIds(){
+  const rounds=state.tournament?.rounds||[];
+  const semifinalRound=rounds.find(r=>Number(r.size)===4);
+  const finalRound=rounds.find(r=>Number(r.size)===2) || rounds[rounds.length-1];
+
+  const semifinalists=[];
+  if(semifinalRound){
+    semifinalRound.matches.forEach(m=>{
+      if(m.a!=null)semifinalists.push(String(m.a));
+      if(m.b!=null)semifinalists.push(String(m.b));
+    });
+  }
+
+  const finalists=[];
+  const f=finalRound?.matches?.[0];
+  if(f){
+    if(f.a!=null)finalists.push(String(f.a));
+    if(f.b!=null)finalists.push(String(f.b));
+  }
+
+  return {
+    champion:String(state.champion),
+    finalists:[...new Set(finalists)],
+    semifinalists:[...new Set(semifinalists)]
+  };
+}
+
+async function submitSupabaseResult(){
+  if(!state || state.stage!=="winner" || state.champion==null)return false;
+  if(state.supabaseRecorded || supabaseSubmitting)return true;
+
+  const payload=knockoutStageIds();
+  if(payload.finalists.length!==2 || payload.semifinalists.length!==4){
+    console.warn("Supabase result not sent: invalid knockout data",payload);
+    return false;
+  }
+
+  supabaseSubmitting=true;
+  try{
+    const res=await fetch(`${SUPABASE.url}/rest/v1/worldcup_results`,{
+      method:"POST",
+      headers:supabaseHeaders({
+        "Content-Type":"application/json",
+        "Prefer":"return=minimal"
+      }),
+      body:JSON.stringify(payload)
+    });
+
+    if(!res.ok){
+      const msg=await res.text();
+      throw new Error(`Supabase INSERT ${res.status}: ${msg}`);
+    }
+
+    state.supabaseRecorded=true;
+    save();
+    return true;
+  }catch(err){
+    console.error("Supabase result upload failed:",err);
+    return false;
+  }finally{
+    supabaseSubmitting=false;
+  }
+}
+
+async function fetchAllSupabaseResults(){
+  const all=[];
+  const pageSize=1000;
+  let from=0;
+
+  while(true){
+    const to=from+pageSize-1;
+    const res=await fetch(
+      `${SUPABASE.url}/rest/v1/worldcup_results?select=champion,finalists,semifinalists&order=id.asc`,
+      {
+        headers:supabaseHeaders({
+          "Range":`${from}-${to}`,
+          "Range-Unit":"items"
+        })
+      }
+    );
+
+    if(!res.ok){
+      const msg=await res.text();
+      throw new Error(`Supabase SELECT ${res.status}: ${msg}`);
+    }
+
+    const rows=await res.json();
+    all.push(...rows);
+
+    if(rows.length<pageSize)break;
+    from+=pageSize;
+  }
+
+  return all;
+}
+
+function aggregateSupabaseResults(results){
+  const stats={runs:results.length,songs:{}};
+
+  function ensure(id){
+    const k=String(id);
+    if(!stats.songs[k]){
+      stats.songs[k]={championships:0,finals:0,semifinals:0};
+    }
+    return stats.songs[k];
+  }
+
+  results.forEach(r=>{
+    if(r.champion!=null)ensure(r.champion).championships++;
+
+    (Array.isArray(r.finalists)?r.finalists:[]).forEach(id=>{
+      if(id!=null)ensure(id).finals++;
+    });
+
+    (Array.isArray(r.semifinalists)?r.semifinalists:[]).forEach(id=>{
+      if(id!=null)ensure(id).semifinals++;
+    });
+  });
+
+  return stats;
+}
+
 /* ---------- STATS ---------- */
 function loadStats(){
   try{
@@ -1473,8 +1612,10 @@ function finishTournament(championId){
   state.stage="winner";
   state.champion=championId;
   state.completedAt=new Date().toISOString();
-  recordStatistics();
+  state.supabaseRecorded=false;
+  recordStatistics(); // local backup only
   save();
+  submitSupabaseResult();
 }
 
 
@@ -1482,68 +1623,120 @@ function percentText(n,den){
   if(!den)return "0.0%";
   return `${(Number(n||0)*100/den).toFixed(1)}%`;
 }
-function renderStatistics(){
+async function renderStatistics(){
   stopYoutubePlayers();
-  const stats=loadStats();
-  const runs=Number(stats.runs||0);
 
   stageLabel.textContent="통계";
-  statusText.textContent=runs ? `완료된 월드컵 ${runs}회 기준` : "아직 완료된 월드컵이 없습니다.";
-
-  const rows=songs.map(song=>{
-    const st=stats.songs?.[String(song.id)] || {};
-    return {
-      song,
-      championships:Number(st.championships||0),
-      finals:Number(st.finals||0),
-      semifinals:Number(st.semifinals||0)
-    };
-  }).sort((a,b)=>
-    (b.championships-a.championships) ||
-    (b.finals-a.finals) ||
-    (b.semifinals-a.semifinals) ||
-    String(a.song.title||"").localeCompare(String(b.song.title||""),"ko")
-  );
-
-  const rowMarkup=rows.map((r,i)=>{
-    const image=webImagePath(r.song.image);
-    return `
-      <div class="stats-row">
-        <div class="stats-rank">${i+1}</div>
-        ${image
-          ? `<img class="stats-jacket" src="${escapeHtml(image)}" alt="" onerror="this.style.visibility='hidden'">`
-          : `<div class="stats-jacket"></div>`}
-        <div class="stats-song" title="${escapeHtml(r.song.title||"")}">${escapeHtml(r.song.title||"")}</div>
-        <div class="stats-num">${percentText(r.championships,runs)}</div>
-        <div class="stats-num">${percentText(r.finals,runs)}</div>
-        <div class="stats-num">${percentText(r.semifinals,runs)}</div>
-      </div>`;
-  }).join("");
+  statusText.textContent="전체 이용자 통계를 불러오는 중…";
 
   main.innerHTML=`
     <section class="stats-panel">
       <div class="stats-head">
         <div>
           <h2>전체 통계</h2>
-          <div class="muted">우승확률 내림차순 · ${runs}회 기준</div>
+          <div class="muted">Supabase에서 불러오는 중…</div>
         </div>
       </div>
-      <div class="stats-table">
-        <div class="stats-row header">
-          <div></div>
-          <div>곡</div>
-          <div class="stats-num">우승</div>
-          <div class="stats-num">결승</div>
-          <div class="stats-num">4강</div>
-        </div>
-        ${runs ? rowMarkup : `<div class="stats-empty">월드컵을 한 번 완료하면 통계가 표시됩니다.</div>`}
-      </div>
+      <div class="stats-empty">통계를 불러오는 중입니다.</div>
       <div class="stats-actions">
         <button class="btn" id="backToResultBtn">대진표로 돌아가기</button>
       </div>
     </section>`;
 
   $("#backToResultBtn")?.addEventListener("click",renderWinner);
+
+  if(state?.stage==="winner" && !state.supabaseRecorded){
+    await submitSupabaseResult();
+  }
+
+  try{
+    const results=await fetchAllSupabaseResults();
+    const stats=aggregateSupabaseResults(results);
+    const runs=Number(stats.runs||0);
+
+    statusText.textContent=runs
+      ? `완료된 전체 월드컵 ${runs}회 기준`
+      : "아직 완료된 월드컵이 없습니다.";
+
+    const rows=songs.map(song=>{
+      const st=stats.songs?.[String(song.id)] || {};
+      return {
+        song,
+        championships:Number(st.championships||0),
+        finals:Number(st.finals||0),
+        semifinals:Number(st.semifinals||0)
+      };
+    }).sort((a,b)=>
+      (b.championships-a.championships) ||
+      (b.finals-a.finals) ||
+      (b.semifinals-a.semifinals) ||
+      String(a.song.title||"").localeCompare(String(b.song.title||""),"ko")
+    );
+
+    const rowMarkup=rows.map((r,i)=>{
+      const image=webImagePath(r.song.image);
+      return `
+        <div class="stats-row">
+          <div class="stats-rank">${i+1}</div>
+          ${image
+            ? `<img class="stats-jacket" src="${escapeHtml(image)}" alt="" onerror="this.style.visibility='hidden'">`
+            : `<div class="stats-jacket"></div>`}
+          <div class="stats-song" title="${escapeHtml(r.song.title||"")}">${escapeHtml(r.song.title||"")}</div>
+          <div class="stats-num">${percentText(r.championships,runs)}</div>
+          <div class="stats-num">${percentText(r.finals,runs)}</div>
+          <div class="stats-num">${percentText(r.semifinals,runs)}</div>
+        </div>`;
+    }).join("");
+
+    main.innerHTML=`
+      <section class="stats-panel">
+        <div class="stats-head">
+          <div>
+            <h2>전체 통계</h2>
+            <div class="muted">우승확률 내림차순 · 전체 ${runs}회 기준</div>
+          </div>
+        </div>
+        <div class="stats-table">
+          <div class="stats-row header">
+            <div></div>
+            <div>곡</div>
+            <div class="stats-num">우승</div>
+            <div class="stats-num">결승</div>
+            <div class="stats-num">4강</div>
+          </div>
+          ${runs ? rowMarkup : `<div class="stats-empty">아직 서버에 완료된 월드컵 결과가 없습니다.</div>`}
+        </div>
+        <div class="stats-actions">
+          <button class="btn" id="backToResultBtn">대진표로 돌아가기</button>
+        </div>
+      </section>`;
+
+    $("#backToResultBtn")?.addEventListener("click",renderWinner);
+  }catch(err){
+    console.error("Supabase stats load failed:",err);
+    statusText.textContent="전체 통계를 불러오지 못했습니다.";
+
+    main.innerHTML=`
+      <section class="stats-panel">
+        <div class="stats-head">
+          <div>
+            <h2>전체 통계</h2>
+            <div class="muted">서버 연결 오류</div>
+          </div>
+        </div>
+        <div class="stats-empty">
+          통계를 불러오지 못했습니다.<br>
+          <small>${escapeHtml(err.message||String(err))}</small>
+        </div>
+        <div class="stats-actions">
+          <button class="btn" id="retryStatsBtn">다시 시도</button>
+          <button class="btn" id="backToResultBtn">대진표로 돌아가기</button>
+        </div>
+      </section>`;
+
+    $("#retryStatsBtn")?.addEventListener("click",renderStatistics);
+    $("#backToResultBtn")?.addEventListener("click",renderWinner);
+  }
 }
 
 /* ---------- SVG RESULT BRACKET ---------- */
@@ -1974,6 +2167,9 @@ function buildSvgBracket(){
 }
 
 function renderWinner(){
+  if(state?.stage==="winner" && !state.supabaseRecorded){
+    submitSupabaseResult();
+  }
   const s=songById(state.champion);
   stageLabel.textContent="우승";
   statusText.textContent="대회 완료";
