@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <!-- v28 Piku-style dual direct YouTube iframes -->
+  <!-- v29 pure click-to-play YouTube iframe experiment -->
   <title>Roselia Song Championship</title>
   <style>
     :root {
@@ -882,14 +882,15 @@ function youtubeSlot(song){
 
   const start=youtubeStartSeconds(song?.youtubeStart);
   const origin=encodeURIComponent(location.origin);
-  const pageUrl=encodeURIComponent(location.href);
 
-  // Piku-style direct YouTube embed:
-  // separate iframe per candidate, created with the matchup itself.
+  // Pure click-to-play embed:
+  // - no autoplay
+  // - no loadVideoById / playVideo / seekTo
+  // - user clicks YouTube's own play button
   const src=
     `https://www.youtube.com/embed/${encodeURIComponent(id)}`+
-    `?loop=1`+
-    `&start=${start}`+
+    `?start=${start}`+
+    `&loop=1`+
     `&iv_load_policy=3`+
     `&enablejsapi=1`+
     `&origin=${origin}`;
@@ -898,6 +899,7 @@ function youtubeSlot(song){
     <iframe
       src="${src}"
       title="${escapeHtml(song?.title||"")} YouTube 클라이맥스"
+      loading="eager"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
       allowfullscreen
       referrerpolicy="strict-origin-when-cross-origin"></iframe>
@@ -907,10 +909,8 @@ function youtubeSlot(song){
 function stopYoutubePlayer(){}
 
 function stopYoutubePlayers(){
-  // With direct per-candidate embeds, leaving the round removes those iframe elements.
-  // No singleton player exists to pause/hide.
+  // Pure embeds are removed automatically when the current round/card DOM is replaced.
 }
-
 function card(song,selected=false,extra=""){
   return `
     <article class="card ${selected?'selected':''}" ${extra}>
