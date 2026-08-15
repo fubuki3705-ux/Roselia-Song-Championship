@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <!-- v30 pure click-to-play + real select buttons -->
   <title>Roselia Song Championship</title>
   <style>
     :root {
@@ -69,6 +68,17 @@
       font-size:12px;
       text-align:center;
     }
+    .youtube-play{
+      width:100%;
+      border:0;
+      background:transparent;
+      color:#e9e9f2;
+      padding:10px 8px;
+      cursor:pointer;
+      font:inherit;
+      font-weight:800;
+    }
+    .youtube-play:hover{background:rgba(255,255,255,.05)}
     .youtube-slot iframe{
       display:block;
       width:100%;
@@ -80,25 +90,65 @@
       padding:9px 10px;
       color:var(--muted);
     }
+    .youtube-dock{
+      max-width:720px;
+      margin:0 auto 16px;
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:16px;
+      overflow:hidden;
+      box-shadow:var(--shadow);
+    }
+    .youtube-dock[hidden]{display:none}
+    .youtube-dock-head{
+      min-height:38px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:7px 10px;
+      border-bottom:1px solid var(--line);
+      font-size:13px;
+    }
+    .youtube-close{
+      width:30px;
+      height:30px;
+      border:0;
+      border-radius:8px;
+      background:transparent;
+      color:var(--muted);
+      font-size:22px;
+      line-height:1;
+      cursor:pointer;
+    }
+    .youtube-close:hover{background:rgba(255,255,255,.06);color:var(--text)}
+    .youtube-player-shell{
+      position:relative;
+      width:100%;
+      aspect-ratio:16/9;
+      background:#000;
+    }
+    #youtubeSharedPlayer,
+    #youtubeSharedPlayer iframe{
+      width:100% !important;
+      height:100% !important;
+      display:block;
+    }
+    .youtube-loading{
+      position:absolute;
+      inset:0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:var(--muted);
+      background:#0b0b0e;
+      font-size:12px;
+    }
+    .youtube-dock.ready .youtube-loading{display:none}
 
     .select-badge{
-      position:absolute;
-      top:10px;
-      right:10px;
-      z-index:20;
-      background:rgba(17,18,24,.92);
-      border:1px solid var(--line);
-      border-radius:999px;
-      padding:6px 9px;
-      font-size:12px;
-      font-weight:700;
-      color:var(--text);
-      font-family:inherit;
-      cursor:pointer;
-      pointer-events:auto;
-      touch-action:manipulation;
-      appearance:none;
-      -webkit-appearance:none;
+      position:absolute;top:10px;right:10px;background:rgba(17,18,24,.88);border:1px solid var(--line);
+      border-radius:999px;padding:6px 9px;font-size:12px;font-weight:700
     }
     .card.selected .select-badge{background:var(--accent);border-color:transparent}
     .panel{
@@ -486,6 +536,15 @@
         padding:5px;
         margin-top:5px;
       }
+      .youtube-dock{
+        margin:0 0 10px;
+        border-radius:12px;
+      }
+      .youtube-dock-head{
+        min-height:34px;
+        padding:5px 8px;
+        font-size:11px;
+      }
       .knockout-duel .select-badge{
         top:6px;right:6px;padding:4px 6px;font-size:10px;
       }
@@ -796,7 +855,19 @@
     <strong id="stageLabel">데이터 로딩 중…</strong>
     <span class="muted" id="statusText"></span>
   </div>
-<main id="main"></main>
+
+  <section id="youtubeDock" class="youtube-dock" hidden>
+    <div class="youtube-dock-head">
+      <strong id="youtubeDockTitle">YouTube 클라이맥스</strong>
+      <button type="button" class="youtube-close" id="youtubeCloseBtn" aria-label="YouTube 닫기">×</button>
+    </div>
+    <div class="youtube-player-shell">
+      <div id="youtubeSharedPlayer"></div>
+      <div id="youtubeLoading" class="youtube-loading">YouTube 플레이어 로딩 중…</div>
+    </div>
+  </section>
+
+  <main id="main"></main>
 </div>
 
 <script>
@@ -823,6 +894,10 @@ const $=s=>document.querySelector(s);
 const main=$("#main");
 const stageLabel=$("#stageLabel");
 const statusText=$("#statusText");
+const youtubeDock=$("#youtubeDock");
+const youtubeDockTitle=$("#youtubeDockTitle");
+const youtubeLoading=$("#youtubeLoading");
+const youtubeCloseBtn=$("#youtubeCloseBtn");
 
 function shuffle(arr){
   const a=[...arr];
@@ -889,48 +964,120 @@ function youtubeStartSeconds(value){
   if(m) return Math.max(0,parseInt(m[1],10)*60+parseInt(m[2],10));
   return 0;
 }
+let youtubePlayer=null;
+let youtubeApiLoading=false;
+let youtubePending=null;
+let youtubePlayerReady=false;
+
+function youtubeButtonMarkup(){
+  return `<button type="button" class="youtube-play"
+    onclick="event.stopPropagation(); playYoutubeClip(this.closest('.youtube-slot'))">▶ 클라이맥스 재생</button>`;
+}
 function youtubeSlot(song){
   const id=String(song?.youtubeId||"").trim();
   if(!id){
     return `<div class="youtube-slot"><div class="youtube-missing">YouTube 없음</div></div>`;
   }
-
   const start=youtubeStartSeconds(song?.youtubeStart);
-  const origin=encodeURIComponent(location.origin);
-
-  // Pure click-to-play embed:
-  // - no autoplay
-  // - no loadVideoById / playVideo / seekTo
-  // - user clicks YouTube's own play button
-  const src=
-    `https://www.youtube.com/embed/${encodeURIComponent(id)}`+
-    `?start=${start}`+
-    `&loop=1`+
-    `&iv_load_policy=3`+
-    `&enablejsapi=1`+
-    `&origin=${origin}`;
-
-  return `<div class="youtube-slot" onclick="event.stopPropagation()">
-    <iframe
-      src="${src}"
-      title="${escapeHtml(song?.title||"")} YouTube 클라이맥스"
-      loading="eager"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-      allowfullscreen
-      referrerpolicy="strict-origin-when-cross-origin"></iframe>
-  </div>`;
+  return `<div class="youtube-slot"
+    data-youtube-id="${escapeHtml(id)}"
+    data-youtube-start="${start}"
+    data-youtube-title="${escapeHtml(song?.title||"")}"
+    onclick="event.stopPropagation()">
+      ${youtubeButtonMarkup()}
+    </div>`;
 }
+function ensureYoutubeApi(){
+  if(window.YT && window.YT.Player){
+    if(!youtubePlayer) createSharedYoutubePlayer();
+    return;
+  }
+  if(youtubeApiLoading)return;
+  youtubeApiLoading=true;
+  const tag=document.createElement("script");
+  tag.src="https://www.youtube.com/iframe_api";
+  tag.async=true;
+  document.head.appendChild(tag);
+}
+window.onYouTubeIframeAPIReady=function(){
+  youtubeApiLoading=false;
+  createSharedYoutubePlayer();
+};
+function createSharedYoutubePlayer(){
+  if(youtubePlayer || !(window.YT && window.YT.Player))return;
 
-function stopYoutubePlayer(){}
-
+  const pending=youtubePending;
+  youtubePlayer=new YT.Player("youtubeSharedPlayer",{
+    width:"100%",
+    height:"100%",
+    videoId:pending?.videoId||"",
+    playerVars:{
+      autoplay:pending?1:0,
+      playsinline:1,
+      rel:0
+    },
+    events:{
+      onReady:(event)=>{
+        youtubePlayerReady=true;
+        youtubeDock?.classList.add("ready");
+        if(youtubePending){
+          const p=youtubePending;
+          youtubePending=null;
+          event.target.loadVideoById({
+            videoId:p.videoId,
+            startSeconds:p.startSeconds
+          });
+        }
+      },
+      onError:()=>{
+        youtubeDock?.classList.add("ready");
+      }
+    }
+  });
+}
+function showYoutubeDock(title){
+  if(!youtubeDock)return;
+  youtubeDock.hidden=false;
+  youtubeDockTitle.textContent=title?`${title} · 클라이맥스`:"YouTube 클라이맥스";
+  if(!youtubePlayerReady)youtubeDock.classList.remove("ready");
+}
+function stopYoutubePlayer(hide=true){
+  youtubePending=null;
+  if(youtubePlayer && youtubePlayerReady){
+    try{youtubePlayer.pauseVideo();}catch(e){}
+  }
+  if(hide && youtubeDock)youtubeDock.hidden=true;
+}
 function stopYoutubePlayers(){
-  // Pure embeds are removed automatically when the current round/card DOM is replaced.
+  // Backward-compatible alias for older calls elsewhere in this file.
+  stopYoutubePlayer(true);
+}
+function playYoutubeClip(slot){
+  if(!slot || !slot.dataset.youtubeId)return;
+
+  const videoId=slot.dataset.youtubeId;
+  const startSeconds=Math.max(0,Number(slot.dataset.youtubeStart||0)||0);
+  const title=slot.dataset.youtubeTitle||"";
+
+  showYoutubeDock(title);
+
+  if(youtubePlayer && youtubePlayerReady){
+    // Reuse the SAME iframe/player. Do not recreate it for each song.
+    youtubePlayer.loadVideoById({
+      videoId,
+      startSeconds
+    });
+    return;
+  }
+
+  youtubePending={videoId,startSeconds};
+  ensureYoutubeApi();
 }
 function card(song,selected=false,extra=""){
   return `
     <article class="card ${selected?'selected':''}" ${extra}>
       <div class="image-wrap">${imgTag(song)}</div>
-      <button type="button" class="select-badge">${selected?'선택됨':'선택'}</button>
+      <div class="select-badge">${selected?'선택됨':'선택'}</div>
       <div class="card-body">
         <div class="song-title">${escapeHtml(song?.title||"")}</div>
         <div class="artist">${escapeHtml(song?.artist||"Roselia")}</div>
@@ -980,6 +1127,7 @@ function initializeNew(){
   save();render();
 }
 function render(){
+  stopYoutubePlayer(true);
   updateUndoButton();
   if(!state){initializeNew();return;}
   if(state.stage==="error"){renderError();return;}
@@ -1244,6 +1392,7 @@ function animateWinnerToCenter(cardEl,callback){
   },1220);
 }
 function renderTournament(){
+  stopYoutubePlayer(true);
   const t=state.tournament,round=currentRound();
   const match=round.matches[t.matchIndex];
   if(!match||match.winner!=null){advanceByesAndFindMatch();save();render();return;}
@@ -1265,6 +1414,7 @@ function renderTournament(){
   document.querySelectorAll("[data-win-id]").forEach(el=>el.addEventListener("click",()=>{
     if(el.dataset.locked==="1")return;
     document.querySelectorAll("[data-win-id]").forEach(x=>x.dataset.locked="1");
+    stopYoutubePlayer(true);
     pushUndo();
     const id=el.dataset.winId;
     match.winner=[match.a,match.b].find(x=>String(x)===String(id));
