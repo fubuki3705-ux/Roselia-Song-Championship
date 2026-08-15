@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <!-- v29 pure click-to-play YouTube iframe experiment -->
+  <!-- v30 pure click-to-play + real select buttons -->
   <title>Roselia Song Championship</title>
   <style>
     :root {
@@ -82,8 +82,23 @@
     }
 
     .select-badge{
-      position:absolute;top:10px;right:10px;background:rgba(17,18,24,.88);border:1px solid var(--line);
-      border-radius:999px;padding:6px 9px;font-size:12px;font-weight:700
+      position:absolute;
+      top:10px;
+      right:10px;
+      z-index:20;
+      background:rgba(17,18,24,.92);
+      border:1px solid var(--line);
+      border-radius:999px;
+      padding:6px 9px;
+      font-size:12px;
+      font-weight:700;
+      color:var(--text);
+      font-family:inherit;
+      cursor:pointer;
+      pointer-events:auto;
+      touch-action:manipulation;
+      appearance:none;
+      -webkit-appearance:none;
     }
     .card.selected .select-badge{background:var(--accent);border-color:transparent}
     .panel{
@@ -915,7 +930,7 @@ function card(song,selected=false,extra=""){
   return `
     <article class="card ${selected?'selected':''}" ${extra}>
       <div class="image-wrap">${imgTag(song)}</div>
-      <div class="select-badge">${selected?'선택됨':'선택'}</div>
+      <button type="button" class="select-badge">${selected?'선택됨':'선택'}</button>
       <div class="card-body">
         <div class="song-title">${escapeHtml(song?.title||"")}</div>
         <div class="artist">${escapeHtml(song?.artist||"Roselia")}</div>
